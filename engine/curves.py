@@ -62,6 +62,26 @@ def load_zero_coupons(curve_date: date) -> pd.DataFrame:
     return pd.DataFrame(rows,columns=["tenor_months", "rate_value"])
 
 
+def load_forward_rates(curve_date: date) -> pd.DataFrame:
+    """Charge les taux forward pour une date donnée.
+
+    Returns:
+        DataFrame avec colonnes [forward_months, tenor_months, rate_value]
+    """
+    query = """
+        SELECT fr.forward_month, fr.tenor_month, fr.rate_value
+        FROM forward_rates fr
+        JOIN curve_dates cd ON fr.curve_date_id = cd.id
+        WHERE cd.curve_date = ?
+        ORDER BY fr.forward_month, fr.tenor_month
+    """
+    rows = execute_query(query, (curve_date.isoformat(),))
+
+    if not rows:
+        return pd.DataFrame(columns=["forward_month", "tenor_month", "rate_value"])
+    return pd.DataFrame(rows,columns=["forward_month", "tenor_month", "rate_value"])
+
+
 def load_discount_factors(curve_date: date) -> pd.DataFrame:
     """Charge les discount factors pour une date donnée.
 

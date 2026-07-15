@@ -14,6 +14,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from datetime import date
 
+from engine.curves import load_forward_rates, load_discount_factors
 from engine.credit_calculation import load_credits, load_credit_by_id, load_schedule
 from engine.model_mr import SimulationParameters, HullWhite1F
 from engine.credit_valorisation import valorisation_ci, save_simul, save_valo, load_valo
@@ -98,6 +99,10 @@ with tab_creation:
 
         st.markdown("### 1. Taux de marché et discount-factors")
 
+        # Récupération des taux forward et discount factors
+        forward_rates_0 = load_forward_rates(view_date)
+        discount_factors_0 = load_discount_factors(view_date)
+
         # Initialisation des parametres de simulation
         sim_params = SimulationParameters(
             n_scenarios=n_scenarios,
@@ -110,8 +115,9 @@ with tab_creation:
             mean_reversion=hw_a,
             volatility=hw_s,
             simulation_params=sim_params,
-            r0=0.03,
             tenors=[1, 120],
+            initial_curve=forward_rates_0,
+            initiale_df=discount_factors_0,
             seed=42,
         )
         forward_rates, discount_factors = model.run()
@@ -179,7 +185,7 @@ with tab_creation:
         if not discount_factors.empty:
             fig2 = go.Figure()
 
-            couleur = "#1f77b4"
+            couleur = ["#1f77b4", "#b41f1f"]
 
             # Agrégation par horizon : moyenne + bornes de l'intervalle de confiance à 95%
             stats = (
@@ -194,7 +200,7 @@ with tab_creation:
             )
 
             # Conversion de la couleur hex en rgba pour l'enveloppe semi-transparente
-            r, g, b = tuple(int(couleur.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+            r, g, b = tuple(int(couleur[0].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
 
             # Enveloppe de l'intervalle de confiance (bande continue borne haute -> borne basse)
             fig2.add_trace(
@@ -210,14 +216,25 @@ with tab_creation:
                 )
             )
 
-            # Courbe du taux moyen
+            # Courbe du DF moyen
             fig2.add_trace(
                 go.Scatter(
                     x=stats["horizon_mois"],
                     y=stats["moyenne"],
                     mode="lines",
-                    line=dict(color=couleur, width=2),
+                    line=dict(color=couleur[0], width=2),
                     name=f"Discount factor moyen",
+                )
+            )
+
+            # Courbe du DF initial
+            fig2.add_trace(
+                go.Scatter(
+                    x=discount_factors_0["forward_month"],
+                    y=discount_factors_0["factor_value"],
+                    mode="lines",
+                    line=dict(color=couleur[1], width=2),
+                    name=f"Discount factor initial",
                 )
             )
 

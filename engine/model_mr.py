@@ -70,7 +70,7 @@ class HullWhite1F:
         self.sim_params = simulation_params
 
         # --- paramètres de calage sur la courbe initiale ---
-        self.initial_curve = initial_curve
+        self.initial_curve = initial_curve.rename(columns={"forward_month":"horizon_mois","tenor_month":"tenor_mois"})
         self.tenors = tenors
         self.seed = seed
 
@@ -141,13 +141,13 @@ class HullWhite1F:
                 (1 - np.exp(-2 * self.a * df.horizon_mois * self.sim_params.dt)) *
                 (1 - np.exp(-self.a * df.tenor_mois * self.sim_params.dt)) ** 2
             ) /
-            (4 * self.a ** 3 * df.tenor_mois * self.sim_params.dt),
+            (4 * (self.a ** 3) * df.tenor_mois * self.sim_params.dt)
         )
         df["taux_forward"] = (
             df.rate_value +
             df.bm * df.v_stoch +
             df.bm * (self.sigma * (1 - np.exp(-self.a * df.horizon_mois * self.sim_params.dt)) / self.a) ** 2 / 2 +
-            df.cm,
+            df.cm
         )
         self.forward_rates = df[["scenario","horizon_mois","tenor_mois","taux_forward"]]
         return self.forward_rates
@@ -171,6 +171,23 @@ class HullWhite1F:
         self.discount_factors = df[["scenario","horizon_mois","discount_factor"]]
         return self.discount_factors
 
+    def _check_df_consistency(self):
+        df_compare = (
+            self.initiale_df.rename(colulmns={"forward_month":"horizon_mois"})
+            .merge(
+                self.discount_factors.groupby("horizon_mois").discount_factor.mean().reset_index(),
+                how="inner", on="horizon_mois"
+            )
+            .eval("delta = discount_factor / factor_value - 1")
+        )
+        if (df_compare.delta.max() > 0.01) & (df_compare.delta.min() < 0.01):
+            raise ValueError("Les discount factors simulés ne cadrent pas avec les valeurs initiales.")
+        return 1
+    
+    def _check_vol_consistency(self):
+        # A compléter
+        return 1
+
     # -------------------------------------------------------------------
     def run(self):
         """Exécute la simulation complète et renseigne tous les attributs."""
@@ -185,6 +202,7 @@ class HullWhite1F:
 # =============================================================================
 if __name__ == "__main__":
 
+    """
     # Courbe initiale des taux zéro-coupon (exemple : courbe plate à 3%)
     def courbe_initiale(t: float) -> float:
         return 0.03
@@ -223,3 +241,4 @@ if __name__ == "__main__":
     moyenne_df = discount_factors.groupby("horizon_mois")["discount_factor"].mean()
     print("\n=== Discount factor moyen (Monte Carlo) par horizon ===")
     print(moyenne_df)
+    """
