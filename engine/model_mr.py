@@ -59,7 +59,7 @@ class HullWhite1F:
         simulation_params: SimulationParameters,
         tenors: List[int],
         initial_curve: pd.DataFrame,
-        initiale_df: Optional[pd.DataFrame] = None,
+        initial_df: Optional[pd.DataFrame] = None,
         seed: Optional[int] = None,
     ):
         # --- paramètres du modèle ---
@@ -71,8 +71,11 @@ class HullWhite1F:
 
         # --- paramètres de calage sur la courbe initiale ---
         self.initial_curve = initial_curve.rename(columns={"forward_month":"horizon_mois","tenor_month":"tenor_mois"})
+        self.initial_df = initial_df
         self.tenors = tenors
         self.seed = seed
+        if self.initial_df is not None:
+            self.initial_df = self.initial_df.rename(columns={"forward_month":"horizon_mois"})
 
         # --- résultats de simulation (calculés à la demande) ---
         self._stochastic_term: Optional[pd.DataFrame] = None
@@ -173,19 +176,46 @@ class HullWhite1F:
 
     def _check_df_consistency(self):
         df_compare = (
-            self.initiale_df.rename(colulmns={"forward_month":"horizon_mois"})
+            self.initial_df
             .merge(
                 self.discount_factors.groupby("horizon_mois").discount_factor.mean().reset_index(),
                 how="inner", on="horizon_mois"
             )
             .eval("delta = discount_factor / factor_value - 1")
         )
-        if (df_compare.delta.max() > 0.01) & (df_compare.delta.min() < 0.01):
+        if (
+            (df_compare.delta.max() > (1 / self.sim_params.n_scenarios)) |
+            (df_compare.delta.min() < (-1 / self.sim_params.n_scenarios))
+        ):
+            print(df_compare)
             raise ValueError("Les discount factors simulés ne cadrent pas avec les valeurs initiales.")
         return 1
     
     def _check_vol_consistency(self):
-        # A compléter
+        vol_compare = self.forward_rates.copy()
+        vol_compare = (
+            vol_compare
+            .loc[vol_compare.horizon_mois==self.sim_params.horizon_max]
+            .groupby("tenor_mois")
+            .taux_forward
+            .std()
+            .reset_index()
+        )
+        vol_compare["vol_th"] = (
+            np.sqrt(
+                (1 - np.exp(-2 * self.a * self.sim_params.horizon_max * self.sim_params.dt)) * self.sigma ** 2 /
+                (2 * self.a)
+            ) *
+            (1 - np.exp(-self.a * vol_compare.tenor_mois * self.sim_params.dt)) /
+            (self.a * vol_compare.tenor_mois * self.sim_params.dt)
+        )
+        vol_compare["delta"] = vol_compare.taux_forward / vol_compare.vol_th - 1
+        if (
+            (vol_compare.delta.max() > (1 / self.sim_params.n_scenarios)) |
+            (vol_compare.delta.min() < (-1 / self.sim_params.n_scenarios))
+        ):
+            print(vol_compare)
+            raise ValueError("Les volatilités simulées ne cadrent pas avec les valeurs théoriques.")
         return 1
 
     # -------------------------------------------------------------------
@@ -194,51 +224,8 @@ class HullWhite1F:
         self._generate_stochastic_term()
         self._compute_forward_rates()
         self._compute_discount_factors()
+        self._check_vol_consistency()
+        if self.initial_df is not None:
+            self._check_df_consistency()
         return self.forward_rates, self.discount_factors
 
-
-# =============================================================================
-# 3. Exemple d'utilisation
-# =============================================================================
-if __name__ == "__main__":
-
-    """
-    # Courbe initiale des taux zéro-coupon (exemple : courbe plate à 3%)
-    def courbe_initiale(t: float) -> float:
-        return 0.03
-
-    # Caractéristiques de la simulation :
-    # 1 000 scénarios, horizon de projection 5 ans (60 mois), pas mensuel
-    sim_params = SimulationParameters(
-        n_scenarios=1000,
-        horizon_max=60,
-        time_step=1,
-    )
-
-    # Instanciation du modèle HW1F
-    model = HullWhite1F(
-        mean_reversion=0.05,
-        volatility=0.01,
-        simulation_params=sim_params,
-        r0=0.03,
-        initial_curve=courbe_initiale,
-        tenors=[1, 3, 6, 12, 24, 60],
-        seed=42,
-    )
-
-    forward_rates, discount_factors = model.run()
-
-    print("=== Taux forward simulés (extrait) ===")
-    print(forward_rates.head(10))
-    print("\nShape :", forward_rates.shape)
-
-    print("\n=== Discount factors simulés (extrait) ===")
-    print(discount_factors.head(10))
-    print("\nShape :", discount_factors.shape)
-
-    # Exemple de vérification : moyenne des DF sur tous les scénarios à
-    # chaque horizon, comparée au DF théorique de la courbe initiale
-    moyenne_df = discount_factors.groupby("horizon_mois")["discount_factor"].mean()
-    print("\n=== Discount factor moyen (Monte Carlo) par horizon ===")
-    print(moyenne_df)
-    """

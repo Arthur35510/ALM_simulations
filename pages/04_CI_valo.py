@@ -117,7 +117,7 @@ with tab_creation:
             simulation_params=sim_params,
             tenors=[1, 120],
             initial_curve=forward_rates_0,
-            initiale_df=discount_factors_0,
+            initial_df=discount_factors_0,
             seed=42,
         )
         forward_rates, discount_factors = model.run()
