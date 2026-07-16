@@ -17,7 +17,7 @@ from datetime import date
 from engine.curves import load_forward_rates, load_discount_factors
 from engine.credit_calculation import load_credits, load_credit_by_id, load_schedule
 from engine.model_mr import SimulationParameters, HullWhite1F
-from engine.credit_valorisation import valorisation_ci, save_simul, save_valo, load_valo
+from engine.credit_valorisation import valorisation_ci, store_valorisation, load_valo
 
 from database import execute_query
 from config import HW_MEAN_REVERSION, HW_VOLATILITY, SIMUL_N_SCEN, SIMUL_TMAX_MONTHS, SIMUL_STEP_MONTHS
@@ -95,7 +95,6 @@ with tab_creation:
 
     if submitted:
         
-        simul_id = save_simul(credit_id, hw_a, hw_s, view_date, n_scenarios, horizon_max, time_step)
 
         st.markdown("### 1. Taux de marché et discount-factors")
 
@@ -258,7 +257,7 @@ with tab_creation:
 
         # Simulation et valorisation
         df_rarn, dict_valo = valorisation_ci(discount_factors, forward_rates, ci_schedule, credit_row["taux"])
-        valo_id = save_valo(simul_id, dict_valo)
+        valo_id = store_valorisation(credit_id, hw_a, hw_s, view_date, n_scenarios, horizon_max, time_step, dict_valo)
         
         if not df_rarn.empty:
 

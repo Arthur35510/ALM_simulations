@@ -103,7 +103,8 @@ def valorisation_ci(
     return df_rarn, dict_valo
 
 
-def save_simul(
+def _get_or_create_simul(
+    conn: sqlite3.Connection,
     ci_id: int,
     hw_a: float,
     hw_s: float,
@@ -112,20 +113,13 @@ def save_simul(
     h_max_months: int,
     time_step_months: int
 ) -> int:
-    """
-    Sauvegarde une simulation.
- 
-    Parameters
-    ----------
-    simul_id : id de la simulation
-    nominal : montant emprunté en euros
-    schedule : dataframe contenant l'écoulement
-    """
- 
-    conn = get_connection()
-    conn.execute(
+
+    """Récupère ou crée un enregistrement simulations_config et retourne son ID."""
+
+    cursor = conn.execute(
         """
-        DELETE FROM simulations_config 
+        SELECT id
+        FROM simulations_config
         WHERE
             ci_id = ? AND
             hw_a = ? AND
@@ -137,41 +131,39 @@ def save_simul(
         """,
         (ci_id, hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
     )
+    row = cursor.fetchone()
+    if row:
+        return row["id"]
 
-    cur = conn.execute(
-        """INSERT INTO simulations_config 
-            (ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+    cursor = conn.execute(
+        """
+        INSERT INTO simulations_config
+        (ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
         (ci_id, hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
     )
-    
-    conn.commit()
-    simul_id = cur.lastrowid
-    conn.close()
+    return cursor.lastrowid
 
-    return simul_id
-
-
-def save_valo(
-    simul_id: int,
+def store_valorisation(
+    ci_id: int,
+    hw_a: float,
+    hw_s: float,
+    curve_date: date,
+    nb_scenarios: int,
+    h_max_months: int,
+    time_step_months: int,
     dict_valo: dict
-) -> int:
-    """
-    Sauvegarde une liste de valo.
- 
-    Parameters
-    ----------
-    simul_id : id de la simulation
-    dict_valo : dictionnaire contenant les valorisations
-    """
- 
+) -> None:
+    
+    """Sauvegarde une liste de valo."""
+
     conn = get_connection()
+    simul_id = _get_or_create_simul(conn, ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
     conn.execute(
         """DELETE FROM ci_valorisations 
            WHERE simul_id = ?""",
         (simul_id,)
     )
-
     cur = conn.execute(
         """INSERT INTO ci_valorisations 
             (simul_id, valo_ctrl, valo_ra, valo_rn, valo_rarn)
@@ -184,13 +176,25 @@ def save_valo(
             dict_valo["cfdf_rarn"],
         )
     )
-    
+
     conn.commit()
     valo_id = cur.lastrowid
     conn.close()
-
     return valo_id
 
+def load_simul(simul_id: int) -> pd.DataFrame:
+    """Retourne l'écoulement contractuel d'un crédit."""
+    conn = get_connection()
+    df = pd.read_sql_query(
+        f"""
+            SELECT *
+            FROM simulations_config
+            WHERE id = {simul_id}
+        """,
+        conn
+    )
+    conn.close()
+    return df
 
 def load_valo(valo_id: int) -> pd.DataFrame:
     """Retourne l'écoulement contractuel d'un crédit."""

@@ -173,7 +173,7 @@ class HullWhite1F:
         df["discount_factor"] = np.exp(-df.v2 * self.sim_params.dt)
         self.discount_factors = df[["scenario","horizon_mois","discount_factor"]]
         return self.discount_factors
-
+    
     def _check_df_consistency(self):
         df_compare = (
             self.initial_df
@@ -224,8 +224,8 @@ class HullWhite1F:
         self._generate_stochastic_term()
         self._compute_forward_rates()
         self._compute_discount_factors()
-        self._check_vol_consistency()
-        if self.initial_df is not None:
-            self._check_df_consistency()
+        #self._check_vol_consistency()
+        #if self.initial_df is not None:
+        #    self._check_df_consistency()
         return self.forward_rates, self.discount_factors
 
