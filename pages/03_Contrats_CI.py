@@ -10,6 +10,7 @@ Lancement : streamlit run app_streamlit.py
 """
 
 import streamlit as st
+import numpy as np
 
 from engine.credit_calculation import (
     CI_AMORTISSEMENT,
@@ -48,44 +49,51 @@ with tab_creation:
             nominal = st.number_input(
                 "Nominal (€)", min_value=1000.0, value=200_000.0, step=1000.0, format="%.2f"
             )
-            taux_pct = st.number_input(
-                "Taux d'intérêt annuel (%)", min_value=0.0, value=3.5, step=0.05, format="%.3f"
+            taux_min_pct = st.number_input(
+                "Taux d'intérêt annuel (%) - minimum", min_value=0.0, value=2.0, step=0.05, format="%.3f"
+            )
+            taux_step_pct = st.number_input(
+                "Taux d'intérêt annuel (%) - step", min_value=0.0, value=0.1, step=0.05, format="%.3f"
             )
         with col2:
             mode = st.selectbox("Mode d'amortissement", CI_AMORTISSEMENT)
             duree_annees = st.number_input(
                 "Durée (années)", min_value=1, max_value=40, value=20, step=1
             )
+            taux_max_pct = st.number_input(
+                "Taux d'intérêt annuel (%) - maximum", min_value=0.0, value=4.0, step=0.05, format="%.3f"
+            )
 
         submitted = st.form_submit_button("💾 Enregistrer et calculer l'échéancier")
 
     if submitted:
-        taux = taux_pct / 100.0
-        credit_id = save_credit(
-            nom=nom, nominal=nominal, taux=taux, mode=mode, duree_annees=int(duree_annees)
-        )
-        st.success(f"Crédit « {nom} » enregistré avec l'id {credit_id}.")
 
-        schedule = build_amortization_schedule(
-            nominal=nominal, taux_annuel=taux, mode=mode, duree_annees=int(duree_annees)
-        )
+        for taux in np.arange(taux_min_pct/100, (taux_max_pct+taux_step_pct)/100, taux_step_pct/100):
+            credit_id = save_credit(
+                nom=nom, nominal=nominal, taux=taux, mode=mode, duree_annees=int(duree_annees)
+            )
+            st.success(f"Crédit « {nom} » - {round(taux*100, 2)}% enregistré avec l'id {credit_id}.")
 
-        save_schedule(credit_id, nominal, schedule)
+            schedule = build_amortization_schedule(
+                nominal=nominal, taux_annuel=taux, mode=mode, duree_annees=int(duree_annees)
+            )
 
-        col_a, col_b, col_c = st.columns(3)
-        col_a.metric("Total intérêts payés", f"{schedule['interets'].sum():,.0f} €")
-        col_b.metric("Total remboursé", f"{schedule['echeance'].sum():,.0f} €")
-        col_c.metric("Nombre d'échéances", f"{len(schedule)}")
+            save_schedule(credit_id, nominal, schedule)
 
-        st.markdown("**Échéancier contractuel**")
-        st.dataframe(
-            schedule.style.format(FORMAT_MONETAIRE),
-            use_container_width=True,
-            height=400,
-        )
+        #col_a, col_b, col_c = st.columns(3)
+        #col_a.metric("Total intérêts payés", f"{schedule['interets'].sum():,.0f} €")
+        #col_b.metric("Total remboursé", f"{schedule['echeance'].sum():,.0f} €")
+        #col_c.metric("Nombre d'échéances", f"{len(schedule)}")
 
-        st.markdown("**Décomposition intérêts / capital par échéance**")
-        st.bar_chart(schedule.set_index("mois")[["interets", "principal_rembourse"]])
+        #st.markdown("**Échéancier contractuel**")
+        #st.dataframe(
+        #    schedule.style.format(FORMAT_MONETAIRE),
+        #    use_container_width=True,
+        #    height=400,
+        #)
+
+        #st.markdown("**Décomposition intérêts / capital par échéance**")
+        #st.bar_chart(schedule.set_index("mois")[["interets", "principal_rembourse"]])
 
 # ---------------------------------------------------------------------------
 # Volet 2 : visualisation d'un crédit existant
