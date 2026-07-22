@@ -79,23 +79,23 @@ CREATE TABLE IF NOT EXISTS ci_ecoulements (
 
 CREATE TABLE IF NOT EXISTS simulations_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ci_id INTEGER NOT NULL REFERENCES credits_immo(id),
     hw_a DECIMAL(10,6) NOT NULL,
     hw_s DECIMAL(10,6) NOT NULL,
     curve_date DATE NOT NULL,
     nb_scenarios INTEGER NOT NULL,
     h_max_months INTEGER NOT NULL,
     time_step_months INTEGER NOT NULL,
-    UNIQUE(ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
+    UNIQUE(hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
 );
 
 CREATE TABLE IF NOT EXISTS ci_valorisations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     simul_id INTEGER NOT NULL REFERENCES simulations_config(id),
+    ci_id INTEGER NOT NULL REFERENCES credits_immo(id),
     valo_ctrl DECIMAL(10,6) NOT NULL,
     valo_ra DECIMAL(10,6) NOT NULL,
     valo_rn DECIMAL(10,6) NOT NULL,
     valo_rarn DECIMAL(10,6) NOT NULL,
-    UNIQUE(simul_id)
+    UNIQUE(simul_id, ci_id)
 );
 

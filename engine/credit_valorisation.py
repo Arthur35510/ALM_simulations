@@ -16,7 +16,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-from typing import List, Dict, Optional
+from typing import List, Union, Dict, Optional
 from datetime import date
 from database import get_connection, execute_query
 
@@ -38,7 +38,6 @@ def apply_rarn(
     df_out["taux_rn"] = np.minimum(df_out["taux_client"], df_out["taux_forward_min"] + marge_rn)
 
     return df_out.drop(columns=["taux_survie", "taux_forward_min"])
-
 
 def valorisation_ci(
     discount_factors: pd.DataFrame,
@@ -102,10 +101,8 @@ def valorisation_ci(
 
     return df_rarn, dict_valo
 
-
 def _get_or_create_simul(
     conn: sqlite3.Connection,
-    ci_id: int,
     hw_a: float,
     hw_s: float,
     curve_date: date,
@@ -121,7 +118,6 @@ def _get_or_create_simul(
         SELECT id
         FROM simulations_config
         WHERE
-            ci_id = ? AND
             hw_a = ? AND
             hw_s = ? AND
             curve_date = ? AND
@@ -129,7 +125,7 @@ def _get_or_create_simul(
             h_max_months = ? AND
             time_step_months = ?
         """,
-        (ci_id, hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
+        (hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
     )
     row = cursor.fetchone()
     if row:
@@ -138,9 +134,9 @@ def _get_or_create_simul(
     cursor = conn.execute(
         """
         INSERT INTO simulations_config
-        (ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months) VALUES (?, ?, ?, ?, ?, ?, ?)
+        (hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months) VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (ci_id, hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
+        (hw_a, hw_s, curve_date.isoformat(), nb_scenarios, h_max_months, time_step_months)
     )
     return cursor.lastrowid
 
@@ -158,18 +154,19 @@ def store_valorisation(
     """Sauvegarde une liste de valo."""
 
     conn = get_connection()
-    simul_id = _get_or_create_simul(conn, ci_id, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
+    simul_id = _get_or_create_simul(conn, hw_a, hw_s, curve_date, nb_scenarios, h_max_months, time_step_months)
     conn.execute(
         """DELETE FROM ci_valorisations 
-           WHERE simul_id = ?""",
-        (simul_id,)
+           WHERE simul_id = ? and ci_id = ?""",
+        (simul_id, ci_id)
     )
     cur = conn.execute(
         """INSERT INTO ci_valorisations 
-            (simul_id, valo_ctrl, valo_ra, valo_rn, valo_rarn)
-            VALUES (?, ?, ?, ?, ?)""",
+            (simul_id, ci_id, valo_ctrl, valo_ra, valo_rn, valo_rarn)
+            VALUES (?, ?, ?, ?, ?, ?)""",
         (
             simul_id,
+            ci_id,
             dict_valo["cfdf_ctrl"],
             dict_valo["cfdf_ra"],
             dict_valo["cfdf_rn"],
@@ -182,31 +179,55 @@ def store_valorisation(
     conn.close()
     return valo_id
 
-def load_simul(simul_id: int) -> pd.DataFrame:
+def load_simulations(simul_id: Optional[int] = None) -> pd.DataFrame:
     """Retourne l'écoulement contractuel d'un crédit."""
     conn = get_connection()
-    df = pd.read_sql_query(
-        f"""
-            SELECT *
-            FROM simulations_config
-            WHERE id = {simul_id}
-        """,
-        conn
-    )
+    if simul_id is None:
+        df = pd.read_sql_query(
+            f"""
+                SELECT *
+                FROM simulations_config
+            """,
+            conn
+        )
+    else:
+        df = pd.read_sql_query(
+            f"""
+                SELECT *
+                FROM simulations_config
+                WHERE id = {simul_id}
+            """,
+            conn
+        )
     conn.close()
     return df
 
-def load_valo(valo_id: int) -> pd.DataFrame:
-    """Retourne l'écoulement contractuel d'un crédit."""
+def load_valorisations(valo_id: Optional[Union[int, List[int]]] = None) -> pd.DataFrame:
+
     conn = get_connection()
-    df = pd.read_sql_query(
-        f"""
-            SELECT *
-            FROM ci_valorisations
-            WHERE id = {valo_id}
-        """,
-        conn
-    )
+    if valo_id is None:
+        df = pd.read_sql_query(
+            f"""
+                SELECT *
+                FROM ci_valorisations
+            """,
+            conn
+        )
+    else:
+        if valo_id is int:
+            valo_id = [str(valo_id)]
+        else:
+            valo_id = [str(i_v) for i_v in valo_id]
+        valo_id = ", ".join(valo_id)
+
+        df = pd.read_sql_query(
+            f"""
+                SELECT *
+                FROM ci_valorisations
+                WHERE id in ({valo_id})
+            """,
+            conn
+        )
     conn.close()
     return df
 

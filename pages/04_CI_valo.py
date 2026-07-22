@@ -12,12 +12,13 @@ Lancement : streamlit run app_streamlit.py
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+import numpy as np
 from datetime import date
 
 from engine.curves import load_forward_rates, load_discount_factors
-from engine.credit_calculation import load_credits, load_credit_by_id, load_schedule
+from engine.credit_calculation import CI_AMORTISSEMENT, load_credits, load_credit_by_id, load_schedule
 from engine.model_mr import SimulationParameters, HullWhite1F
-from engine.credit_valorisation import valorisation_ci, store_valorisation, load_valo
+from engine.credit_valorisation import valorisation_ci, store_valorisation, load_simulations, load_valorisations
 
 from database import execute_query
 from config import HW_MEAN_REVERSION, HW_VOLATILITY, SIMUL_N_SCEN, SIMUL_TMAX_MONTHS, SIMUL_STEP_MONTHS
@@ -74,10 +75,14 @@ with tab_creation:
             horizon_max = st.number_input(
                 "Horizon simulation (mois)", min_value=1, value=SIMUL_TMAX_MONTHS, step=1
             )
-            credit_id = st.selectbox(
-                "Crédit",
-                options=list(label_map.keys()),
-                format_func=lambda cid: label_map[cid],
+            #credit_id = st.selectbox(
+            #    "Crédit",
+            #    options=list(label_map.keys()),
+            #    format_func=lambda cid: label_map[cid],
+            #)
+            mode = st.selectbox("Mode d'amortissement", CI_AMORTISSEMENT)
+            nominal = st.number_input(
+                "Nominal (€)", value=None, step=1000.0, format="%.2f"
             )
 
         with col2:
@@ -90,11 +95,16 @@ with tab_creation:
             time_step = st.number_input(
                 "Pas de temps (mois)", min_value=1, value=SIMUL_STEP_MONTHS, step=1
             )
+            duree_annees = st.number_input(
+                "Durée (années)", min_value=1, max_value=40, value=20, step=1
+            )
+            taux_pct = st.number_input(
+                "Taux d'intérêt annuel (%)", value=None, step=0.05, format="%.3f"
+            )
 
         submitted = st.form_submit_button("💾 Enregistrer et lancer la simulation")
 
     if submitted:
-        
 
         st.markdown("### 1. Taux de marché et discount-factors")
 
@@ -249,58 +259,38 @@ with tab_creation:
             st.plotly_chart(fig2, use_container_width=True)
 
         st.divider()
-        st.markdown("### 2. Modélisation RARN")
+        st.markdown("### 2. Valorisation")
 
-        # Récupération du crédit
-        credit_row = load_credit_by_id(credit_id)
-        ci_schedule = load_schedule(credit_id)
+        # Récupération des crédits
+        credits_all = load_credits()
+        credits_filter = credits_all.loc[
+            (credits_all["mode"] == mode) &
+            (credits_all["duree_annees"] == duree_annees)
+        ].reset_index(drop=True)
+        if nominal is not None:
+            credits_filter = credits_filter.loc[credits_filter.nominal == nominal].reset_index(drop=True)
+        if taux_pct is not None:
+            credits_filter = credits_filter.loc[credits_filter.taux == taux_pct/100].reset_index(drop=True)
 
-        # Simulation et valorisation
-        df_rarn, dict_valo = valorisation_ci(discount_factors, forward_rates, ci_schedule, credit_row["taux"])
-        valo_id = store_valorisation(credit_id, hw_a, hw_s, view_date, n_scenarios, horizon_max, time_step, dict_valo)
-        
-        if not df_rarn.empty:
+        l_valo_id = []
+        for credit_id in credits_filter.id.unique():
 
-            simul_schedule = df_rarn.groupby(["horizon_mois"]).agg({"crd":"mean", "crd_ra":"mean"}).reset_index()
+            credit_id = int(credit_id)
+            ci_schedule = load_schedule(credit_id)
 
-            fig2 = go.Figure()
-
-            colors_schedule = {
-                "crd": '#2ca02c',
-                "crd_ra": '#ff7f0e'
-            }
-
-            labels_schedule = {
-                "crd": 'CRD ctrl',
-                "crd_ra": 'CRD ra'
-            }
-            for type_schedule in ["crd", "crd_ra"]:
-
-                color = colors_schedule[type_schedule]
-                label = labels_schedule[type_schedule]
-
-                fig2.add_trace(go.Scatter(
-                    x=simul_schedule["horizon_mois"] / 12,
-                    y=simul_schedule[type_schedule],
-                    mode='lines',
-                    name=label,
-                    line=dict(width=1.5, color=color)
-                ))
-
-            fig2.update_layout(
-                title=f"Ecoulement du crédit avant et après application du modèle",
-                xaxis_title="Horizon de projection (années)",
-                yaxis_title="CRD",
-                height=400,
-                hovermode='x unified',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            # Simulation et valorisation
+            df_rarn, dict_valo = valorisation_ci(
+                discount_factors,
+                forward_rates,
+                ci_schedule,
+                float(credits_filter.loc[credits_filter.id==credit_id,"taux"].iloc[0])
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            valo_id = store_valorisation(credit_id, hw_a, hw_s, view_date, n_scenarios, horizon_max, time_step, dict_valo)
+            l_valo_id.append(valo_id)
+            st.success(f"Crédit « {credit_id} » - Valorisation enregistrée avec l'id {valo_id}.")
 
-        st.divider()
-        st.markdown("### 3. Valorisation")
-
-        df_valo = load_valo(valo_id)
+        print(l_valo_id)
+        df_valo = load_valorisations(l_valo_id)
         st.dataframe(df_valo, use_container_width=True)
 
 
@@ -309,4 +299,161 @@ with tab_creation:
 # Volet 2 : visualisation d'un crédit existant
 # ---------------------------------------------------------------------------
 with tab_visualisation:
-    st.subheader("Sélection d'un crédit enregistré")
+    st.subheader("Sélection des caractéristiques de crédits")
+
+    # Liste des credits chargés disponibles
+    valorisations_df = load_simulations()
+
+    if valorisations_df.empty:
+        st.info("Aucune simulation enregistrée pour le moment. Créez-en une dans le premier onglet.")
+    else:
+        label_map = {
+            row.id: (
+                f"#{row.id} — {row.curve_date} — {row.hw_a} — {row.hw_s} — "
+                f"{row.nb_scenarios} — {row.h_max_months} — {row.time_step_months}"
+            )
+            for row in valorisations_df.itertuples()
+        }
+
+    with st.form("form_visualisation_simulation"):
+        simul_id = st.selectbox(
+            "Simulation",
+            options=list(label_map.keys()),
+            format_func=lambda cid: label_map[cid],
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            mode = st.selectbox("Mode d'amortissement", CI_AMORTISSEMENT)
+            nominal = st.number_input(
+                "Nominal (€)", value=None, step=1000.0, format="%.2f"
+            )
+
+        with col2:
+            duree_annees = st.number_input(
+                "Durée (années)", min_value=1, max_value=40, value=20, step=1
+            )
+            taux_pct = st.number_input(
+                "Taux d'intérêt annuel (%)", value=None, step=0.05, format="%.3f"
+            )
+
+        submitted = st.form_submit_button("💾 Pricing des coûts de RARN")
+
+    if submitted:
+
+        st.markdown("### 1. Evolution des valeurs en fonction du taux client")
+
+         # Récupération des crédits
+        credits_all = load_credits()
+        credits_filter = credits_all.loc[
+            (credits_all["mode"] == mode) &
+            (credits_all["duree_annees"] == duree_annees)
+        ].reset_index(drop=True)
+        if nominal is not None:
+            credits_filter = credits_filter.loc[credits_filter.nominal == nominal].reset_index(drop=True)
+        if taux_pct is not None:
+            credits_filter = credits_filter.loc[credits_filter.taux == taux_pct/100].reset_index(drop=True)
+
+        # Récupération des valorisations
+        valo_all = load_valorisations()
+        valo_filter = (
+            valo_all
+            .loc[valo_all.simul_id == simul_id]
+            .merge(
+                credits_filter[["id","taux"]].rename(columns={"id":"ci_id"}),
+                how="inner", on="ci_id"
+            )
+        ).reset_index(drop=True)
+
+        st.session_state["sim_results"] = valo_filter
+
+        if not valo_filter.empty:
+
+            fig2 = go.Figure()
+
+            colors_schedule = {
+                "valo_ctrl": "#2ca038",
+                "valo_ra": "#2a0eff",
+                "valo_rn": '#ff7f0e',
+                "valo_rarn": "#ff0e0e"
+            }
+
+            labels_schedule = {
+                "valo_ctrl": 'Valorisation ctrl',
+                "valo_ra": 'Valorisation wi RA',
+                "valo_rn": 'Valorisation wi RN',
+                "valo_rarn": 'Valorisation wi RARN'
+            }
+            for type_valo in ["valo_ctrl", "valo_ra", "valo_rn", "valo_rarn"]:
+
+                color = colors_schedule[type_valo]
+                label = labels_schedule[type_valo]
+
+                fig2.add_trace(go.Scatter(
+                    x=valo_filter["taux"]*100,
+                    y=valo_filter[type_valo],
+                    mode='lines',
+                    name=label,
+                    line=dict(width=1.5, color=color)
+                ))
+
+            fig2.update_layout(
+                title=f"Valorisations en fonction du niveau du taux client",
+                xaxis_title="Taux client (%)",
+                yaxis_title="Valeur",
+                height=400,
+                hovermode='x unified',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+    if "sim_results" in st.session_state:
+
+        st.divider()
+        st.markdown("### 2. Pricing RARN")
+
+        # Calibrage des fonctions d'interpolation / extrapolation
+        def fit_quadratic(x_data, y_data):
+            """
+            Fits a second-degree polynomial (quadratic) to the given data.
+            
+            Parameters:
+                x_data (array-like): X values
+                y_data (array-like): Y values
+                
+            Returns:
+                poly_func (callable): function to compute y for given x
+            """
+            # Convert to numpy arrays and validate
+            x = np.array(x_data, dtype=float)
+            y = np.array(y_data, dtype=float)
+            
+            if x.shape != y.shape:
+                raise ValueError("x_data and y_data must have the same length.")
+            if len(x) < 3:
+                raise ValueError("At least 3 points are required for quadratic fitting.")
+            
+            # Fit polynomial of degree 2
+            coeffs = np.polyfit(x, y, deg=2)
+            poly_func = np.poly1d(coeffs)
+            
+            return poly_func
+
+        valo_saved = st.session_state["sim_results"]
+        quadratic_ctrl = fit_quadratic(valo_saved.valo_ctrl, valo_saved.taux)
+        quadratic_ra = fit_quadratic(valo_saved.taux, valo_saved.valo_ra)
+        quadratic_rn = fit_quadratic(valo_saved.taux, valo_saved.valo_rn)
+        quadratic_rarn = fit_quadratic(valo_saved.taux, valo_saved.valo_rarn)
+        
+        taux_client_pct = st.number_input("Taux (%)", value=2.0, step=0.05, format="%.3f")
+        taux_client = taux_client_pct / 100
+        valo_ra = quadratic_ra(taux_client)
+        valo_rn = quadratic_rn(taux_client)
+        valo_rarn = quadratic_rarn(taux_client)
+        rate_ra = quadratic_ctrl(valo_ra)
+        rate_rn = quadratic_ctrl(valo_rn)
+        rate_rarn = quadratic_ctrl(valo_rarn)
+
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Coût des RA", f"{round((rate_ra - taux_client) * 1e4, 0)}bps")
+        col_b.metric("Coût des RN", f"{round((rate_rn - taux_client) * 1e4, 0)}bps")
+        col_c.metric("Coût des RARN", f"{round((rate_rarn - taux_client) * 1e4, 0)}bps")
