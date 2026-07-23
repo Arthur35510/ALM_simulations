@@ -19,14 +19,16 @@ import pandas as pd
 from typing import List, Union, Dict, Optional
 from datetime import date
 from database import get_connection, execute_query
-from engine.rarn import model_rarn
+from engine.specific_codes import model_rarn
 
 
 def valorisation_ci(
     discount_factors: pd.DataFrame,
     taux_forward: pd.DataFrame,
     ci_ecoulement: pd.DataFrame,
-    taux_client: pd.DataFrame,
+    taux_client: float,
+    mode_ci: str,
+    duree_mois_ci: int,
     dt: float = 1/12
 ) -> dict:
     
@@ -34,7 +36,7 @@ def valorisation_ci(
     df_agg = (
         discount_factors
         .merge(
-            taux_forward.loc[taux_forward.tenor_mois==120].reset_index(drop=True),
+            taux_forward.loc[taux_forward.tenor_mois==120].reset_index(drop=True).drop(columns=["tenor_mois"]),
             how="inner", on=["scenario", "horizon_mois"]
         )
         .merge(
@@ -46,7 +48,7 @@ def valorisation_ci(
     df_agg["taux_client"] = taux_client
 
     # Application du modele de rarn
-    df_rarn = model_rarn(df_agg)
+    df_rarn = model_rarn(df_agg, mode_ci, duree_mois_ci)
 
     # Patch
     mt_init = float(df_rarn.loc[df_rarn.horizon_mois==0, "crd"].iloc[0])
@@ -55,16 +57,18 @@ def valorisation_ci(
     # Calcul des CF (nominal et interets)
     df_rarn["cf_nom_ctrl"] = df_rarn.groupby(["scenario"]).crd.shift(1, fill_value=0.0) - df_rarn["crd"]
     df_rarn["cf_nom_ra"] = df_rarn.groupby(["scenario"]).crd_ra.shift(1, fill_value=0.0) - df_rarn["crd_ra"]
+    df_rarn["cf_nom_rn"] = df_rarn.groupby(["scenario"]).crd_rn.shift(1, fill_value=0.0) - df_rarn["crd_rn"]
+    df_rarn["cf_nom_rarn"] = df_rarn.groupby(["scenario"]).crd_rarn.shift(1, fill_value=0.0) - df_rarn["crd_rarn"]
     df_rarn["cf_int_ctrl"] = df_rarn.groupby(["scenario"]).crd.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_client"] * dt) - 1)
     df_rarn["cf_int_ra"] = df_rarn.groupby(["scenario"]).crd_ra.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_client"] * dt) - 1)
-    df_rarn["cf_int_rn"] = df_rarn.groupby(["scenario"]).crd.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_rn"] * dt) - 1)
-    df_rarn["cf_int_rarn"] = df_rarn.groupby(["scenario"]).crd_ra.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_rn"] * dt) - 1)
+    df_rarn["cf_int_rn"] = df_rarn.groupby(["scenario"]).crd_rn.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_rn"] * dt) - 1)
+    df_rarn["cf_int_rarn"] = df_rarn.groupby(["scenario"]).crd_rarn.shift(1, fill_value=0.0) * (np.exp(df_rarn["taux_rn"] * dt) - 1)
 
     # Calcul des CF actualises
     df_rarn["cfdf_ctrl"] = (df_rarn["cf_nom_ctrl"] + df_rarn["cf_int_ctrl"]) * df_rarn["discount_factor"] / mt_init
     df_rarn["cfdf_ra"] = (df_rarn["cf_nom_ra"] + df_rarn["cf_int_ra"]) * df_rarn["discount_factor"] / mt_init
-    df_rarn["cfdf_rn"] = (df_rarn["cf_nom_ctrl"] + df_rarn["cf_int_rn"]) * df_rarn["discount_factor"] / mt_init
-    df_rarn["cfdf_rarn"] = (df_rarn["cf_nom_ra"] + df_rarn["cf_int_rarn"]) * df_rarn["discount_factor"] / mt_init
+    df_rarn["cfdf_rn"] = (df_rarn["cf_nom_rn"] + df_rarn["cf_int_rn"]) * df_rarn["discount_factor"] / mt_init
+    df_rarn["cfdf_rarn"] = (df_rarn["cf_nom_rarn"] + df_rarn["cf_int_rarn"]) * df_rarn["discount_factor"] / mt_init
 
     # Calcul des valeurs
     dict_valo = (

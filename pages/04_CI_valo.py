@@ -276,20 +276,21 @@ with tab_creation:
         for credit_id in credits_filter.id.unique():
 
             credit_id = int(credit_id)
-            ci_schedule = load_schedule(credit_id)
+            ci_schedule = load_schedule(credit_id).drop(columns=["id", "ci_id"])
 
             # Simulation et valorisation
             df_rarn, dict_valo = valorisation_ci(
                 discount_factors,
                 forward_rates,
                 ci_schedule,
-                float(credits_filter.loc[credits_filter.id==credit_id,"taux"].iloc[0])
+                float(credits_filter.loc[credits_filter.id==credit_id,"taux"].iloc[0]),
+                str(credits_filter.loc[credits_filter.id==credit_id,"mode"].iloc[0]),
+                int(credits_filter.loc[credits_filter.id==credit_id,"duree_annees"].iloc[0]*12)
             )
             valo_id = store_valorisation(credit_id, hw_a, hw_s, view_date, n_scenarios, horizon_max, time_step, dict_valo)
             l_valo_id.append(valo_id)
             st.success(f"Crédit « {credit_id} » - Valorisation enregistrée avec l'id {valo_id}.")
 
-        print(l_valo_id)
         df_valo = load_valorisations(l_valo_id)
         st.dataframe(df_valo, use_container_width=True)
 
