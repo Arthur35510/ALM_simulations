@@ -406,8 +406,6 @@ with tab_visualisation:
             )
             st.plotly_chart(fig2, use_container_width=True)
 
-    if "sim_results" in st.session_state:
-
         st.divider()
         st.markdown("### 2. Pricing RARN")
 
@@ -438,22 +436,15 @@ with tab_visualisation:
             
             return poly_func
 
-        valo_saved = st.session_state["sim_results"]
-        quadratic_ctrl = fit_quadratic(valo_saved.valo_ctrl, valo_saved.taux)
-        quadratic_ra = fit_quadratic(valo_saved.taux, valo_saved.valo_ra)
-        quadratic_rn = fit_quadratic(valo_saved.taux, valo_saved.valo_rn)
-        quadratic_rarn = fit_quadratic(valo_saved.taux, valo_saved.valo_rarn)
-        
-        taux_client_pct = st.number_input("Taux (%)", value=2.0, step=0.05, format="%.3f")
-        taux_client = taux_client_pct / 100
-        valo_ra = quadratic_ra(taux_client)
-        valo_rn = quadratic_rn(taux_client)
-        valo_rarn = quadratic_rarn(taux_client)
-        rate_ra = quadratic_ctrl(valo_ra)
-        rate_rn = quadratic_ctrl(valo_rn)
-        rate_rarn = quadratic_ctrl(valo_rarn)
+        quadratic_ctrl = fit_quadratic(valo_filter.valo_ctrl, valo_filter.taux)
+        #quadratic_ra = fit_quadratic(valo_filter.taux, valo_filter.valo_ra)
+        #quadratic_rn = fit_quadratic(valo_filter.taux, valo_filter.valo_rn)
+        #quadratic_rarn = fit_quadratic(valo_filter.taux, valo_filter.valo_rarn)
 
-        col_a, col_b, col_c = st.columns(3)
-        col_a.metric("Coût des RA", f"{round((rate_ra - taux_client) * 1e4, 0)}bps")
-        col_b.metric("Coût des RN", f"{round((rate_rn - taux_client) * 1e4, 0)}bps")
-        col_c.metric("Coût des RARN", f"{round((rate_rarn - taux_client) * 1e4, 0)}bps")
+        for i_opt in ["ra","rn","rarn"]:
+            valo_filter[f"taux_impl_{i_opt}"] = quadratic_ctrl(valo_filter[f"valo_{i_opt}"])
+            valo_filter[f"cost_{i_opt}_bps"] = round((valo_filter[f"taux_impl_{i_opt}"] - valo_filter["taux"]) * 1e4, 0)
+        
+        st.dataframe(valo_filter[["taux", "cost_ra_bps", "cost_rn_bps", "cost_rarn_bps"]], use_container_width=True)
+
+        
